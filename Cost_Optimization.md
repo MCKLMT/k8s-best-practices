@@ -10,6 +10,7 @@ We strive to collect well founded concepts and help the reader to evaluate optio
 Feedback welcome!
 
 To the editors:
+
     > See this as mvp - more detailed topics will come once we have covered the basics
     > We should focus on parts that are azure specific on which we will contribute content.
     > Please provide references to good Kubernetes resources.
@@ -55,7 +56,10 @@ Another option for scaling your applications is the usage of the Azure Container
 
 It is not a replacement for the HPA, but can be used as a replacement for the CA. When the CA is adding nodes to the AKS cluster, it takes time until the nodes are provisioned and ready for pod deployments. On ACI new pods can be spin up instantly.
 
-The only downside currently is that ACI does not have an integration into the VNET the AKS cluster is sitting in. That limits its capability only to applications/pods that do not need to communicate to other applications/pods in the cluster.
+Since Microsoft Ignite 2018 in September it is possible to deploy Azure Container Instances into an existing VNET subnet. The ACI connector capability for that is currently available as a private preview called AKS virtual node. Further information about ACI VNET integration and private preview sign up can be found under the following links.
+
+* [Deploy container instances into an Azure virtual network](https://docs.microsoft.com/en-us/azure/container-instances/container-instances-vnet)
+* [AKS virtual node preview sign up](https://aka.ms/aks-virtual-node-preview-sign-up)
 
 # Node - VM sizes
 
@@ -64,6 +68,8 @@ Selecting the correct VM size can have a significant impact on the operational c
 For special requirements like GPUs you can go with different VM sizes out of the N-series.
 
 AKS clusters for dev/test can be operated with the VM sizes Standard_B2ms, Standard_B4ms or Standard_B8ms to reduce runtime cost compared against the same sizes out of the Dv3-series.
+
+Additionally it is valueable to get the input from the developers who is developing the application about what they believe is the requirement for a worker node GPU/CPU/Memory/IOPS wise. Based on this output you should select the given 't-shirt' side of the worker node. 
 
 # Links
 

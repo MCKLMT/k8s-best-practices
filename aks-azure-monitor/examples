@@ -1,0 +1,141 @@
+# Based based CPU metrics on namespaces
+
+// **************************
+// CPU consumption
+// **************************
+KubePodInventory
+| where ClusterName == 'coin-test-i' 
+| where isnotempty(Computer) // eliminate unscheduled pods
+| where PodStatus in ('Running','Unknown')
+| summarize by bin(TimeGenerated, 1m), Computer, ClusterId, ContainerName, Namespace
+| project TimeGenerated, InstanceName = strcat(ClusterId, '/', ContainerName), Namespace
+| join (
+Perf
+| where ObjectName == 'K8SContainer'
+| where CounterName == 'cpuUsageNanoCores'
+| summarize UsageValue = max(CounterValue) by bin(TimeGenerated, 1m), Computer, InstanceName, CounterName
+| project-away CounterName
+| join kind = fullouter 
+(Perf
+| where ObjectName == 'K8SContainer'
+| where CounterName == 'cpuRequestNanoCores'
+| summarize RequestValue = max(CounterValue) by bin(TimeGenerated, 1m), Computer, InstanceName, CounterName
+| project-away CounterName
+) on Computer, InstanceName, TimeGenerated
+| project TimeGenerated = iif(isnotempty(TimeGenerated), TimeGenerated, TimeGenerated1), 
+          Computer = iif(isnotempty(Computer), Computer, Computer1),
+          InstanceName = iif(isnotempty(InstanceName), InstanceName, InstanceName1),
+          UsageValue = iif(isnotempty(UsageValue), UsageValue, 0.0), 
+          RequestValue = iif(isnotempty(RequestValue), RequestValue, 0.0)
+| extend ConsumedValue = iif(UsageValue > RequestValue, UsageValue, RequestValue)
+) on InstanceName, TimeGenerated
+| summarize TotalCpuConsumedCores = sum(ConsumedValue) / 60 / 1000000 by bin(TimeGenerated, 1h), Namespace
+
+# Bar based memory metrics based on namespaces
+// ********************
+// memory usage
+// ********************
+KubePodInventory
+| where ClusterName == 'coin-test-i' 
+| where isnotempty(Computer) // eliminate unscheduled pods
+| where PodStatus in ('Running','Unknown')
+| summarize by bin(TimeGenerated, 1m), Computer, ClusterId, ContainerName, Namespace
+| project TimeGenerated, InstanceName = strcat(ClusterId, '/', ContainerName), Namespace
+| join (
+Perf
+| where ObjectName == 'K8SContainer'
+| where CounterName == 'memoryRssBytes'
+| summarize UsageValue = max(CounterValue) by bin(TimeGenerated, 1m), Computer, InstanceName, CounterName
+| project-away CounterName
+| join kind = fullouter 
+(Perf
+| where ObjectName == 'K8SContainer'
+| where CounterName == 'memoryRequestBytes'
+| summarize RequestValue = max(CounterValue) by bin(TimeGenerated, 1m), Computer, InstanceName, CounterName
+| project-away CounterName
+) on Computer, InstanceName, TimeGenerated
+| project TimeGenerated = iif(isnotempty(TimeGenerated), TimeGenerated, TimeGenerated1), 
+          Computer = iif(isnotempty(Computer), Computer, Computer1),
+          InstanceName = iif(isnotempty(InstanceName), InstanceName, InstanceName1),
+          UsageValue = iif(isnotempty(UsageValue), UsageValue, 0.0), 
+          RequestValue = iif(isnotempty(RequestValue), RequestValue, 0.0)
+| extend ConsumedValue = iif(UsageValue > RequestValue, UsageValue, RequestValue)
+) on InstanceName, TimeGenerated
+| summarize TotalMemoryConsumedMb = sum(ConsumedValue) / 60 / 1024 / 1024 by bin(TimeGenerated, 1h), Namespace
+
+
+# View Container State
+ContainerInventory
+| where TimeGenerated >= ago(30m)
+| summarize AggregatedValue = dcount(ContainerID) by ContainerState
+| render piechart 
+
+# Get all KubeEvents and remember to filter out what is needed
+KubeEvents
+| where  TimeGenerated >= ago(1h)
+
+# View AKS CPU
+
+let endDateTime = now();
+let startDateTime = ago(1h);
+let trendBinSize = 1m;
+let capacityCounterName = 'cpuCapacityNanoCores';
+let usageCounterName = 'cpuUsageNanoCores';
+KubeNodeInventory
+| where TimeGenerated < endDateTime
+| where TimeGenerated >= startDateTime
+// cluster filter would go here if multiple clusters are reporting to the same Log Analytics workspace
+| distinct ClusterName, Computer
+| join hint.strategy=shuffle (
+  Perf
+  | where TimeGenerated < endDateTime
+  | where TimeGenerated >= startDateTime
+  | where ObjectName == 'K8SNode'
+  | where CounterName == capacityCounterName
+  | summarize LimitValue = max(CounterValue) by Computer, CounterName, bin(TimeGenerated, trendBinSize)
+  | project Computer, CapacityStartTime = TimeGenerated, CapacityEndTime = TimeGenerated + trendBinSize, LimitValue
+) on Computer
+| join kind=inner hint.strategy=shuffle (
+  Perf
+  | where TimeGenerated < endDateTime + trendBinSize
+  | where TimeGenerated >= startDateTime - trendBinSize
+  | where ObjectName == 'K8SNode'
+  | where CounterName == usageCounterName
+  | project Computer, UsageValue = CounterValue, TimeGenerated
+) on Computer
+| where TimeGenerated >= CapacityStartTime and TimeGenerated < CapacityEndTime
+| project ClusterName, Computer, TimeGenerated, UsagePercent = UsageValue * 100.0 / LimitValue
+| summarize AggregatedValue = avg(UsagePercent) by bin(TimeGenerated, trendBinSize), ClusterName
+
+
+# example of memory
+let endDateTime = now();
+let startDateTime = ago(1h);
+let trendBinSize = 1m;
+let capacityCounterName = 'memoryCapacityBytes';
+let usageCounterName = 'memoryRssBytes';
+KubeNodeInventory
+| where TimeGenerated < endDateTime
+| where TimeGenerated >= startDateTime
+// cluster filter would go here if multiple clusters are reporting to the same Log Analytics workspace
+| distinct ClusterName, Computer
+| join hint.strategy=shuffle (
+  Perf
+  | where TimeGenerated < endDateTime
+  | where TimeGenerated >= startDateTime
+  | where ObjectName == 'K8SNode'
+  | where CounterName == capacityCounterName
+  | summarize LimitValue = max(CounterValue) by Computer, CounterName, bin(TimeGenerated, trendBinSize)
+  | project Computer, CapacityStartTime = TimeGenerated, CapacityEndTime = TimeGenerated + trendBinSize, LimitValue
+) on Computer
+| join kind=inner hint.strategy=shuffle (
+  Perf
+  | where TimeGenerated < endDateTime + trendBinSize
+  | where TimeGenerated >= startDateTime - trendBinSize
+  | where ObjectName == 'K8SNode'
+  | where CounterName == usageCounterName
+  | project Computer, UsageValue = CounterValue, TimeGenerated
+) on Computer
+| where TimeGenerated >= CapacityStartTime and TimeGenerated < CapacityEndTime
+| project ClusterName, Computer, TimeGenerated, UsagePercent = UsageValue * 100.0 / LimitValue
+| summarize AggregatedValue = avg(UsagePercent) by bin(TimeGenerated, trendBinSize), ClusterName
